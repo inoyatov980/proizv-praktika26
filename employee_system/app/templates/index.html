@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Система учета сотрудников</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #f0f2f5; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { text-align: center; color: #1a73e8; margin-bottom: 20px; }
+
+        .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+        .mode-switcher { display: flex; gap: 5px; }
+        .mode-btn { padding: 8px 20px; border: 2px solid #1a73e8; border-radius: 5px; background: white; color: #1a73e8; cursor: pointer; text-decoration: none; }
+        .mode-btn.active { background: #1a73e8; color: white; }
+
+        .grid { display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
+        .card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .card-full { grid-column: 1 / -1; }
+
+        .form-group { margin-bottom: 12px; }
+        label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+        input, select { width: 100%; padding: 8px 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; }
+        input:focus, select:focus { outline: none; border-color: #1a73e8; }
+
+        button, .btn { background: #1a73e8; color: white; padding: 8px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; text-decoration: none; display: inline-block; }
+        .btn-danger { background: #dc3545; }
+        .btn-success { background: #28a745; }
+        .btn-sm { padding: 4px 12px; font-size: 12px; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; }
+        tr:hover { background: #f8f9fa; }
+
+        .badge { display: inline-block; padding: 2px 12px; border-radius: 12px; font-size: 12px; color: white; }
+        .badge-developer { background: #17a2b8; }
+        .badge-manager { background: #28a745; }
+        .badge-designer { background: #6f42c1; }
+        .badge-version { background: #ffc107; color: #333; }
+
+        .tree { margin-top: 10px; font-size: 14px; }
+        .tree-node { margin-left: 20px; padding: 5px 0 5px 15px; border-left: 2px solid #1a73e8; }
+
+        .versions-list { max-height: 300px; overflow-y: auto; }
+        .version-item { padding: 8px 12px; margin: 4px 0; background: #f8f9fa; border-radius: 5px; border-left: 3px solid #1a73e8; }
+        .version-current { background: #d4edda; border-left-color: #28a745; }
+
+        .details { background: #e8f0fe; padding: 15px; border-radius: 8px; line-height: 1.8; }
+        .flex { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .mt-10 { margin-top: 10px; }
+        .mb-10 { margin-bottom: 10px; }
+        .text-muted { color: #6c757d; }
+        .search-form { display: flex; gap: 10px; flex-wrap: wrap; }
+        .search-form input, .search-form select { width: auto; flex: 1; min-width: 150px; }
+
+        @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>👔 Система учета сотрудников</h1>
+
+    <div class="top-bar">
+        <div class="mode-switcher">
+            <a href="/?use_orm=true" class="mode-btn {% if use_orm %}active{% endif %}">🔷 ORM</a>
+            <a href="/?use_orm=false" class="mode-btn {% if not use_orm %}active{% endif %}">🔶 Native SQL</a>
+        </div>
+        <span class="text-muted">Текущий режим: {% if use_orm %}ORM{% else %}Native SQL{% endif %}</span>
+    </div>
+
+    <div class="grid">
+        <!-- Форма создания -->
+        <div class="card">
+            <h2>➕ Добавить сотрудника</h2>
+            <form action="/add" method="post">
+                <input type="hidden" name="use_orm" value="{{ use_orm }}">
+                <div class="form-group">
+                    <label>ФИО *</label>
+                    <input type="text" name="full_name" required>
+                </div>
+                <div class="form-group">
+                    <label>Email *</label>
+                    <input type="email" name="email" required>
+                </div>
+                <div class="form-group">
+                    <label>Зарплата *</label>
+                    <input type="number" name="salary" step="0.01" required>
+                </div>
+                <div class="form-group">
+                    <label>Тип сотрудника</label>
+                    <select name="employee_type" id="empType" onchange="toggleFields()">
+                        <option value="developer">Разработчик</option>
+                        <option value="manager">Менеджер</option>
+                        <option value="designer">Дизайнер</option>
+                    </select>
+                </div>
+                <div id="devFields">
+                    <div class="form-group">
+                        <label>Язык программирования</label>
+                        <input type="text" name="programming_language" value="Python">
+                    </div>
+                    <div class="form-group">
+                        <label>GitHub</label>
+                        <input type="text" name="github_username">
+                    </div>
+                    <div class="form-group">
+                        <label>Опыт (лет)</label>
+                        <input type="number" name="years_of_experience" value="0">
+                    </div>
+                </div>
+                <button type="submit">Создать</button>
+            </form>
+        </div>
+
+        <!-- Список сотрудников -->
+        <div class="card">
+            <h2>📋 Сотрудники</h2>
+            <form action="/" method="get" class="search-form">
+                <input type="hidden" name="use_orm" value="{{ use_orm }}">
+                <input type="text" name="search" value="{{ search or '' }}" placeholder="Поиск...">
+                <select name="employee_type">
+                    <option value="">Все типы</option>
+                    <option value="developer" {% if employee_type == 'developer' %}selected{% endif %}>Разработчик</option>
+                    <option value="manager" {% if employee_type == 'manager' %}selected{% endif %}>Менеджер</option>
+                    <option value="designer" {% if employee_type == 'designer' %}selected{% endif %}>Дизайнер</option>
+                </select>
+                <button type="submit">🔍</button>
+                <a href="/?use_orm={{ use_orm }}" class="btn" style="background:#6c757d;">Сброс</a>
+            </form>
+
+            {% if employees %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>ФИО</th>
+                        <th>Email</th>
+                        <th>Тип</th>
+                        <th>Зарплата</th>
+                        <th>Версия</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for e in employees %}
+                    <tr>
+                        <td>{{ e.full_name }}</td>
+                        <td>{{ e.email }}</td>
+                        <td><span class="badge badge-{{ e.employee_type }}">{{ e.employee_type }}</span></td>
+                        <td>{{ e.salary }}</td>
+                        <td><span class="badge badge-version">v{{ e.current_version }}</span></td>
+                        <td>
+                            <a href="/employee/{{ e.id }}?use_orm={{ use_orm }}" class="btn btn-sm">📜</a>
+                            <a href="/delete/{{ e.id }}?use_orm={{ use_orm }}" class="btn btn-sm btn-danger" onclick="return confirm('Удалить?')">❌</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="text-muted">Нет сотрудников</p>
+            {% endif %}
+        </div>
+
+        <!-- Детали сотрудника -->
+        {% if selected_employee %}
+        <div class="card card-full">
+            <h2>👤 Информация о сотруднике</h2>
+            <div class="details">
+                <strong>{{ selected_employee.full_name }}</strong>
+                <span class="badge badge-{{ selected_employee.employee_type }}">{{ selected_employee.employee_type }}</span>
+                <br>
+                Email: {{ selected_employee.email }}<br>
+                Зарплата: {{ selected_employee.salary }}<br>
+                {% if selected_employee.type_details %}
+                <br><strong>Дополнительно:</strong><br>
+                {% for key, val in selected_employee.type_details.items() %}
+                {{ key }}: {{ val }}<br>
+                {% endfor %}
+                {% endif %}
+                {% if selected_employee.is_version %}
+                <br><span class="badge badge-version">Версия {{ selected_employee.version_number }}</span>
+                {% else %}
+                <br><span class="badge badge-version">Текущая версия: {{ selected_employee.current_version }}</span>
+                {% endif %}
+            </div>
+
+            {% if not selected_employee.is_version %}
+            <form action="/update/{{ selected_employee.id }}" method="post" class="mt-10">
+                <input type="hidden" name="use_orm" value="{{ use_orm }}">
+                <h4>✏️ Обновить</h4>
+                <div class="flex">
+                    <input type="text" name="new_name" value="{{ selected_employee.full_name }}" style="flex:1;">
+                    <input type="number" name="new_salary" value="{{ selected_employee.salary }}" style="width:120px;">
+                    <button type="submit" class="btn-success">Обновить (новая версия)</button>
+                </div>
+            </form>
+            {% endif %}
+
+            <h3 class="mt-10">📜 История версий</h3>
+            <div class="versions-list">
+                {% if versions %}
+                {% for v in versions %}
+                <div class="version-item {% if v.version_number == selected_employee.current_version and not selected_employee.is_version %}version-current{% endif %}">
+                    <a href="/employee/{{ selected_employee.id }}/version/{{ v.version_number }}?use_orm={{ use_orm }}" style="text-decoration:none;color:inherit;display:block;">
+                        <strong>Версия {{ v.version_number }}</strong>
+                        <span class="text-muted">— {{ v.changed_at.strftime('%Y-%m-%d %H:%M') if v.changed_at else '—' }}</span>
+                        {% if v.version_number == selected_employee.current_version and not selected_employee.is_version %}⭐ ТЕКУЩАЯ{% endif %}
+                        <br>
+                        <small>ФИО: {{ v.full_name }} | Email: {{ v.email }} | Зарплата: {{ v.salary }}</small>
+                    </a>
+                </div>
+                {% endfor %}
+                {% else %}
+                <span class="text-muted">Нет истории</span>
+                {% endif %}
+            </div>
+
+            <a href="/?use_orm={{ use_orm }}" class="btn btn-sm mt-10" style="background:#6c757d;">← Назад</a>
+        </div>
+        {% endif %}
+
+        <!-- Организационная структура -->
+        <div class="card card-full">
+            <h2>🏢 Организационная структура</h2>
+            {% if org_tree %}
+            <div class="tree">
+                {% for node in org_tree recursive %}
+                <div>
+                    <strong>{{ node.name }}</strong> <span class="text-muted">({{ node.unit_type }})</span>
+                    {% if node.children %}
+                    <div>
+                        {{ loop(node.children) }}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-muted">Нет подразделений</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleFields() {
+    const type = document.getElementById('empType').value;
+    document.getElementById('devFields').style.display = type === 'developer' ? 'block' : 'none';
+}
+</script>
+</body>
+</html>
