@@ -1,27 +1,25 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from typing import List, Optional, Dict, Any
-from app.database import SessionLocal
+from app.database import engine
 from app.models import Employee, Developer, Manager, Designer, EmployeeVersion, OrgUnit
+from app.repositories.base import EmployeeRepository
 
 
 class ORMEmployeeRepository:
     def __init__(self):
-        self.session: Session = SessionLocal()
+        self.session: Session = Session(bind=engine)
 
     def create_employee(self, data: Dict[str, Any]) -> int:
         try:
             # Создаем базового сотрудника
             emp = Employee(
                 full_name=data['full_name'],
-                birth_date=data.get('birth_date'),
                 email=data['email'],
-                phone=data.get('phone'),
-                address=data.get('address'),
-                hire_date=data.get('hire_date'),
                 salary=data['salary'],
                 employee_type=data['employee_type'],
                 org_unit_id=data.get('org_unit_id'),
+                is_active=True,
                 current_version=1
             )
             self.session.add(emp)
@@ -32,7 +30,7 @@ class ORMEmployeeRepository:
             if emp_type == 'developer':
                 dev = Developer(
                     employee_id=emp.id,
-                    programming_language=data['programming_language'],
+                    programming_language=data.get('programming_language', 'Python'),
                     github_username=data.get('github_username'),
                     years_of_experience=data.get('years_of_experience', 0),
                     framework=data.get('framework')
@@ -63,7 +61,8 @@ class ORMEmployeeRepository:
                 full_name=data['full_name'],
                 email=data['email'],
                 salary=data['salary'],
-                employee_type=data['employee_type']
+                employee_type=data['employee_type'],
+                changed_by='system'
             )
             self.session.add(version)
 
@@ -76,25 +75,22 @@ class ORMEmployeeRepository:
     def get_employee(self, emp_id: int, version: Optional[int] = None) -> Optional[Dict[str, Any]]:
         try:
             if version:
-                # Получаем конкретную версию
                 v = self.session.query(EmployeeVersion).filter(
                     EmployeeVersion.employee_id == emp_id,
                     EmployeeVersion.version_number == version
                 ).first()
                 if not v:
                     return None
-                result = {
+                return {
                     'id': emp_id,
                     'full_name': v.full_name,
                     'email': v.email,
-                    'salary': v.salary,
+                    'salary': float(v.salary) if v.salary else 0,
                     'employee_type': v.employee_type,
                     'is_version': True,
                     'version_number': version
                 }
-                return result
 
-            # Получаем текущую версию
             emp = self.session.query(Employee).filter(Employee.id == emp_id).first()
             if not emp:
                 return None
@@ -103,7 +99,6 @@ class ORMEmployeeRepository:
                 'id': emp.id,
                 'full_name': emp.full_name,
                 'email': emp.email,
-                'hire_date': emp.hire_date,
                 'salary': float(emp.salary) if emp.salary else 0,
                 'employee_type': emp.employee_type,
                 'org_unit_id': emp.org_unit_id,
@@ -245,22 +240,56 @@ class ORMEmployeeRepository:
         except Exception as e:
             raise e
 
-    def get_org_tree(self) -> List[Dict[str, Any]]:
+    def get_all_org_units(self) -> List[Dict[str, Any]]:
+        """Получить все подразделения"""
         try:
-            def build_tree(parent_id=None):
-                units = self.session.query(OrgUnit).filter(
-                    OrgUnit.parent_id.is_(None) if parent_id is None else OrgUnit.parent_id == parent_id
-                ).all()
-                return [{
-                    'id': u.id,
-                    'name': u.name,
-                    'unit_type': u.unit_type,
-                    'children': build_tree(u.id)
-                } for u in units]
-
-            return build_tree()
+            units = self.session.query(OrgUnit).all()
+            return [{
+                'id': u.id,
+                'name': u.name,
+                'unit_type': u.unit_type,
+                'parent_id': u.parent_id
+            } for u in units]
         except Exception as e:
             raise e
+
+    def create_org_unit(self, data: Dict[str, Any]) -> int:
+        """Создать подразделение"""
+        try:
+            unit = OrgUnit(
+                name=data['name'],
+                unit_type=data['unit_type'],
+                parent_id=data.get('parent_id')
+            )
+            self.session.add(unit)
+            self.session.commit()
+            return unit.id
+        except Exception as e:
+            self.session.rollback()
+            raise e
+
+    def get_org_tree(self) -> List[Dict[str, Any]]:
+        """Получить дерево подразделений"""
+        try:
+            units = self.get_all_org_units()
+            return self._build_tree_from_list(units)
+        except Exception as e:
+            raise e
+
+    def _build_tree_from_list(self, units, parent_id=None):
+        """Строит дерево из списка подразделений"""
+        result = []
+        for unit in units:
+            if unit.get('parent_id') == parent_id:
+                children = self._build_tree_from_list(units, unit.get('id'))
+                unit_data = {
+                    'id': unit.get('id'),
+                    'name': unit.get('name'),
+                    'unit_type': unit.get('unit_type'),
+                    'children': children
+                }
+                result.append(unit_data)
+        return result
 
     def __del__(self):
         if hasattr(self, 'session'):

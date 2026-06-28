@@ -29,6 +29,46 @@ class Employee(Base):
 
     org_unit = relationship("OrgUnit")
 
+    # Связи с наследниками
+    developer = relationship("Developer", back_populates="employee", uselist=False)
+    manager = relationship("Manager", back_populates="employee", uselist=False)
+    designer = relationship("Designer", back_populates="employee", uselist=False)
+
+
+class Developer(Base):
+    __tablename__ = 'developers'
+    id = Column(Integer, primary_key=True)
+    employee_id = Column(Integer, ForeignKey('employees.id', ondelete='CASCADE'), unique=True)
+    programming_language = Column(String(100), nullable=False)
+    github_username = Column(String(100))
+    years_of_experience = Column(Integer, default=0)
+    framework = Column(String(100))
+
+    employee = relationship("Employee", back_populates="developer")
+
+
+class Manager(Base):
+    __tablename__ = 'managers'
+    id = Column(Integer, primary_key=True)
+    employee_id = Column(Integer, ForeignKey('employees.id', ondelete='CASCADE'), unique=True)
+    team_size = Column(Integer, default=0)
+    budget = Column(Numeric(12, 2))
+    bonus_percent = Column(Numeric(5, 2), default=0)
+    managed_department_id = Column(Integer, ForeignKey('org_units.id'))
+
+    employee = relationship("Employee", back_populates="manager")
+
+
+class Designer(Base):
+    __tablename__ = 'designers'
+    id = Column(Integer, primary_key=True)
+    employee_id = Column(Integer, ForeignKey('employees.id', ondelete='CASCADE'), unique=True)
+    design_tool = Column(String(100))
+    portfolio_url = Column(Text)
+    specialization = Column(String(100))
+
+    employee = relationship("Employee", back_populates="designer")
+
 
 class EmployeeVersion(Base):
     __tablename__ = 'employee_versions'
@@ -41,3 +81,5 @@ class EmployeeVersion(Base):
     employee_type = Column(String(50))
     changed_at = Column(DateTime, default=datetime.utcnow)
     changed_by = Column(String(100), default='system')
+
+    employee = relationship("Employee", backref="versions")

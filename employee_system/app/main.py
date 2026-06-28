@@ -7,7 +7,10 @@ import os
 from app.database import engine
 from app.models import Base, Employee, OrgUnit, EmployeeVersion
 from sqlalchemy.orm import Session
-from datetime import datetime
+
+# Импортируем репозитории
+from app.repositories.orm_repository import ORMEmployeeRepository
+from app.repositories.native_repository import NativeEmployeeRepository
 
 # Создаем таблицы
 Base.metadata.create_all(bind=engine)
@@ -16,6 +19,15 @@ app = FastAPI(title="Employee System")
 
 # Шаблоны
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
+
+
+# Функция выбора репозитория
+def get_repository(use_orm: bool = True):
+    if use_orm:
+        return ORMEmployeeRepository()
+    else:
+        return NativeEmployeeRepository()
+
 
 # Простой HTML без сложных структур
 SIMPLE_HTML = """
@@ -28,6 +40,11 @@ SIMPLE_HTML = """
         body { font-family: 'Segoe UI', Arial, sans-serif; background: #f0f2f5; padding: 20px; }
         .container { max-width: 1400px; margin: 0 auto; }
         h1 { text-align: center; color: #1a73e8; margin-bottom: 20px; }
+
+        .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+        .mode-switcher { display: flex; gap: 5px; }
+        .mode-btn { padding: 8px 20px; border: 2px solid #1a73e8; border-radius: 5px; background: white; color: #1a73e8; cursor: pointer; text-decoration: none; }
+        .mode-btn.active { background: #1a73e8; color: white; }
 
         .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         .card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
@@ -80,11 +97,20 @@ SIMPLE_HTML = """
 <div class="container">
     <h1>👔 Система учета сотрудников</h1>
 
+    <div class="top-bar">
+        <div class="mode-switcher">
+            <a href="/?use_orm=true" class="mode-btn {% if use_orm %}active{% endif %}">🔷 ORM</a>
+            <a href="/?use_orm=false" class="mode-btn {% if not use_orm %}active{% endif %}">🔶 Native SQL</a>
+        </div>
+        <span class="text-muted">Текущий режим: {% if use_orm %}ORM{% else %}Native SQL{% endif %}</span>
+    </div>
+
     <div class="grid">
         <!-- Форма создания сотрудника -->
         <div class="card">
             <h2>➕ Добавить сотрудника</h2>
             <form action="/add" method="post">
+                <input type="hidden" name="use_orm" value="{{ use_orm }}">
                 <div class="form-group">
                     <label>ФИО *</label>
                     <input type="text" name="full_name" required>
@@ -141,6 +167,7 @@ SIMPLE_HTML = """
         <div class="card">
             <h2>📋 Список сотрудников</h2>
             <form action="/" method="get" class="search-form">
+                <input type="hidden" name="use_orm" value="{{ use_orm }}">
                 <input type="text" name="search" placeholder="Поиск..." value="{{ search or '' }}">
                 <select name="employee_type">
                     <option value="">Все типы</option>
@@ -149,7 +176,7 @@ SIMPLE_HTML = """
                     <option value="designer" {% if employee_type == 'designer' %}selected{% endif %}>Дизайнер</option>
                 </select>
                 <button type="submit">🔍</button>
-                <a href="/" class="btn" style="background:#6c757d;">Сброс</a>
+                <a href="/?use_orm={{ use_orm }}" class="btn" style="background:#6c757d;">Сброс</a>
             </form>
 
             {% if employees %}
@@ -173,7 +200,7 @@ SIMPLE_HTML = """
                         <td>{{ e.salary }}</td>
                         <td><span class="badge badge-version">v{{ e.current_version }}</span></td>
                         <td>
-                            <a href="/delete/{{ e.id }}" class="btn btn-sm btn-danger" onclick="return confirm('Удалить сотрудника?')">❌</a>
+                            <a href="/delete/{{ e.id }}?use_orm={{ use_orm }}" class="btn btn-sm btn-danger" onclick="return confirm('Удалить сотрудника?')">❌</a>
                         </td>
                     </tr>
                     {% endfor %}
@@ -191,6 +218,7 @@ SIMPLE_HTML = """
             <div style="margin-bottom: 15px;">
                 <h4 style="margin-bottom: 10px;">Добавить подразделение</h4>
                 <form action="/add_unit" method="post" class="flex" style="gap:10px;">
+                    <input type="hidden" name="use_orm" value="{{ use_orm }}">
                     <input type="text" name="name" placeholder="Название" required style="flex:1;">
                     <select name="unit_type" required>
                         <option value="enterprise">Предприятие</option>
@@ -240,57 +268,46 @@ function toggleFields() {
 """
 
 
+# ==================== ЭНДПОИНТЫ ====================
+
 @app.get("/", response_class=HTMLResponse)
 async def index(
         request: Request,
         search: Optional[str] = None,
         employee_type: Optional[str] = None,
+        use_orm: bool = Query(True),
         error: Optional[str] = None
 ):
-    db = Session(bind=engine)
     try:
-        # Получаем сотрудников
-        query = db.query(Employee).filter(Employee.is_active == True)
-        if search:
-            query = query.filter(Employee.full_name.ilike(f"%{search}%"))
-        if employee_type:
-            query = query.filter(Employee.employee_type == employee_type)
-        employees = query.all()
+        repo = get_repository(use_orm)
 
-        # Получаем подразделения
-        org_units = db.query(OrgUnit).all()
+        # Получаем сотрудников
+        filters = {}
+        if search:
+            filters['search'] = search
+        if employee_type:
+            filters['employee_type'] = employee_type
+
+        employees = repo.get_all_employees(filters if filters else None)
+        org_units = repo.get_all_org_units()
 
         # Строим дерево
-        org_tree = build_tree(org_units)
-
-        # Преобразуем в простые словари
-        employees_data = []
-        for emp in employees:
-            employees_data.append({
-                'id': emp.id,
-                'full_name': emp.full_name,
-                'email': emp.email,
-                'salary': float(emp.salary) if emp.salary else 0,
-                'employee_type': emp.employee_type,
-                'current_version': emp.current_version
-            })
+        org_tree = build_tree_from_list(org_units)
 
         from jinja2 import Template
         template = Template(SIMPLE_HTML)
         html = template.render(
-            employees=employees_data,
+            employees=employees,
             org_units=org_units,
             org_tree=org_tree,
             search=search or '',
             employee_type=employee_type or '',
+            use_orm=use_orm,
             error=error
         )
         return HTMLResponse(content=html)
     except Exception as e:
-        db.rollback()
         return HTMLResponse(content=f"<h1>Ошибка</h1><p>{str(e)}</p>", status_code=500)
-    finally:
-        db.close()
 
 
 @app.post("/add")
@@ -302,84 +319,77 @@ async def add_employee(
         programming_language: Optional[str] = Form("Python"),
         github_username: Optional[str] = Form(""),
         years_of_experience: int = Form(0),
-        org_unit_id: Optional[int] = Form(None)
+        org_unit_id: Optional[int] = Form(None),
+        use_orm: bool = Form(True)
 ):
-    db = Session(bind=engine)
     try:
-        # Проверяем, существует ли email
-        existing = db.query(Employee).filter(Employee.email == email).first()
-        if existing:
-            db.close()
-            return RedirectResponse(f"/?error=Email%20{email}%20уже%20существует", status_code=303)
+        repo = get_repository(use_orm)
 
-        emp = Employee(
-            full_name=full_name,
-            email=email,
-            salary=salary,
-            employee_type=employee_type,
-            org_unit_id=org_unit_id if org_unit_id else None,
-            is_active=True,
-            current_version=1
-        )
-        db.add(emp)
-        db.commit()
-        return RedirectResponse("/", status_code=303)
+        data = {
+            "full_name": full_name,
+            "email": email,
+            "salary": salary,
+            "employee_type": employee_type,
+            "org_unit_id": org_unit_id if org_unit_id else None
+        }
+
+        if employee_type == 'developer':
+            data["programming_language"] = programming_language
+            data["github_username"] = github_username
+            data["years_of_experience"] = years_of_experience
+        elif employee_type == 'manager':
+            data["team_size"] = 0
+            data["budget"] = None
+            data["bonus_percent"] = 0
+        elif employee_type == 'designer':
+            data["design_tool"] = "Figma"
+            data["specialization"] = "UI/UX"
+
+        repo.create_employee(data)
+        return RedirectResponse(f"/?use_orm={use_orm}", status_code=303)
     except Exception as e:
-        db.rollback()
-        return RedirectResponse(f"/?error={str(e)}", status_code=303)
-    finally:
-        db.close()
+        return RedirectResponse(f"/?use_orm={use_orm}&error={str(e)}", status_code=303)
 
 
 @app.post("/add_unit")
 async def add_unit(
         name: str = Form(...),
         unit_type: str = Form(...),
-        parent_id: Optional[int] = Form(None)
+        parent_id: Optional[int] = Form(None),
+        use_orm: bool = Form(True)
 ):
-    db = Session(bind=engine)
     try:
-        unit = OrgUnit(
-            name=name,
-            unit_type=unit_type,
-            parent_id=parent_id if parent_id else None
-        )
-        db.add(unit)
-        db.commit()
-        return RedirectResponse("/", status_code=303)
+        repo = get_repository(use_orm)
+        repo.create_org_unit({
+            "name": name,
+            "unit_type": unit_type,
+            "parent_id": parent_id if parent_id else None
+        })
+        return RedirectResponse(f"/?use_orm={use_orm}", status_code=303)
     except Exception as e:
-        db.rollback()
-        return RedirectResponse(f"/?error={str(e)}", status_code=303)
-    finally:
-        db.close()
+        return RedirectResponse(f"/?use_orm={use_orm}&error={str(e)}", status_code=303)
 
 
 @app.get("/delete/{emp_id}")
-async def delete_employee(emp_id: int):
-    db = Session(bind=engine)
+async def delete_employee(emp_id: int, use_orm: bool = Query(True)):
     try:
-        emp = db.query(Employee).filter(Employee.id == emp_id).first()
-        if emp:
-            emp.is_active = False
-            db.commit()
-        return RedirectResponse("/", status_code=303)
+        repo = get_repository(use_orm)
+        repo.delete_employee(emp_id)
+        return RedirectResponse(f"/?use_orm={use_orm}", status_code=303)
     except Exception as e:
-        db.rollback()
-        return RedirectResponse(f"/?error={str(e)}", status_code=303)
-    finally:
-        db.close()
+        return RedirectResponse(f"/?use_orm={use_orm}&error={str(e)}", status_code=303)
 
 
-def build_tree(units, parent_id=None):
-    """Строит дерево подразделений"""
+def build_tree_from_list(units, parent_id=None):
+    """Строит дерево из списка подразделений"""
     result = []
     for unit in units:
-        if unit.parent_id == parent_id:
-            children = build_tree(units, unit.id)
+        if unit.get('parent_id') == parent_id:
+            children = build_tree_from_list(units, unit.get('id'))
             unit_data = {
-                'id': unit.id,
-                'name': unit.name,
-                'unit_type': unit.unit_type,
+                'id': unit.get('id'),
+                'name': unit.get('name'),
+                'unit_type': unit.get('unit_type'),
                 'children': children
             }
             result.append(unit_data)

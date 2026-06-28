@@ -28,5 +28,13 @@ class EmployeeRepository(ABC):
         pass
 
     @abstractmethod
+    def get_all_org_units(self) -> List[Dict[str, Any]]:
+        pass
+
+    @abstractmethod
+    def create_org_unit(self, data: Dict[str, Any]) -> int:
+        pass
+
+    @abstractmethod
     def get_org_tree(self) -> List[Dict[str, Any]]:
         pass

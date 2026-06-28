@@ -11,12 +11,14 @@ class NativeEmployeeRepository:
         try:
             # Вставляем сотрудника
             self.cursor.execute("""
-                INSERT INTO employees (full_name, birth_date, email, phone, address, hire_date, salary, employee_type, org_unit_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO employees (full_name, email, salary, employee_type, org_unit_id, is_active, current_version)
+                VALUES (?, ?, ?, ?, ?, 1, 1)
             """, (
-                data['full_name'], data.get('birth_date'), data['email'],
-                data.get('phone'), data.get('address'), data.get('hire_date'),
-                data['salary'], data['employee_type'], data.get('org_unit_id')
+                data['full_name'],
+                data['email'],
+                data['salary'],
+                data['employee_type'],
+                data.get('org_unit_id')
             ))
             emp_id = self.cursor.lastrowid
 
@@ -26,26 +28,46 @@ class NativeEmployeeRepository:
                 self.cursor.execute("""
                     INSERT INTO developers (employee_id, programming_language, github_username, years_of_experience, framework)
                     VALUES (?, ?, ?, ?, ?)
-                """, (emp_id, data['programming_language'], data.get('github_username'),
-                      data.get('years_of_experience', 0), data.get('framework')))
+                """, (
+                    emp_id,
+                    data.get('programming_language', 'Python'),
+                    data.get('github_username'),
+                    data.get('years_of_experience', 0),
+                    data.get('framework')
+                ))
             elif emp_type == 'manager':
                 self.cursor.execute("""
                     INSERT INTO managers (employee_id, team_size, budget, bonus_percent, managed_department_id)
                     VALUES (?, ?, ?, ?, ?)
-                """, (emp_id, data.get('team_size', 0), data.get('budget'),
-                      data.get('bonus_percent', 0), data.get('managed_department_id')))
+                """, (
+                    emp_id,
+                    data.get('team_size', 0),
+                    data.get('budget'),
+                    data.get('bonus_percent', 0),
+                    data.get('managed_department_id')
+                ))
             elif emp_type == 'designer':
                 self.cursor.execute("""
                     INSERT INTO designers (employee_id, design_tool, portfolio_url, specialization)
                     VALUES (?, ?, ?, ?)
-                """, (emp_id, data.get('design_tool'), data.get('portfolio_url'),
-                      data.get('specialization')))
+                """, (
+                    emp_id,
+                    data.get('design_tool'),
+                    data.get('portfolio_url'),
+                    data.get('specialization')
+                ))
 
             # Создаем версию
             self.cursor.execute("""
-                INSERT INTO employee_versions (employee_id, version_number, full_name, email, salary, employee_type)
-                VALUES (?, 1, ?, ?, ?, ?)
-            """, (emp_id, data['full_name'], data['email'], data['salary'], data['employee_type']))
+                INSERT INTO employee_versions (employee_id, version_number, full_name, email, salary, employee_type, changed_by)
+                VALUES (?, 1, ?, ?, ?, ?, 'system')
+            """, (
+                emp_id,
+                data['full_name'],
+                data['email'],
+                data['salary'],
+                data['employee_type']
+            ))
 
             self.conn.commit()
             return emp_id
@@ -74,7 +96,7 @@ class NativeEmployeeRepository:
                 }
 
             self.cursor.execute("""
-                SELECT e.id, e.full_name, e.email, e.hire_date, e.salary, e.employee_type,
+                SELECT e.id, e.full_name, e.email, e.salary, e.employee_type,
                        e.org_unit_id, e.is_active, e.current_version,
                        d.programming_language, d.github_username, d.years_of_experience, d.framework,
                        m.team_size, m.budget, m.bonus_percent, m.managed_department_id,
@@ -93,33 +115,32 @@ class NativeEmployeeRepository:
                 'id': row[0],
                 'full_name': row[1],
                 'email': row[2],
-                'hire_date': row[3],
-                'salary': row[4],
-                'employee_type': row[5],
-                'org_unit_id': row[6],
-                'is_active': row[7],
-                'current_version': row[8]
+                'salary': row[3],
+                'employee_type': row[4],
+                'org_unit_id': row[5],
+                'is_active': row[6],
+                'current_version': row[7]
             }
 
-            if row[5] == 'developer':
+            if row[4] == 'developer':
                 result['type_details'] = {
-                    'programming_language': row[9],
-                    'github_username': row[10],
-                    'years_of_experience': row[11],
-                    'framework': row[12]
+                    'programming_language': row[8],
+                    'github_username': row[9],
+                    'years_of_experience': row[10],
+                    'framework': row[11]
                 }
-            elif row[5] == 'manager':
+            elif row[4] == 'manager':
                 result['type_details'] = {
-                    'team_size': row[13],
-                    'budget': row[14],
-                    'bonus_percent': row[15],
-                    'managed_department_id': row[16]
+                    'team_size': row[12],
+                    'budget': row[13],
+                    'bonus_percent': row[14],
+                    'managed_department_id': row[15]
                 }
-            elif row[5] == 'designer':
+            elif row[4] == 'designer':
                 result['type_details'] = {
-                    'design_tool': row[17],
-                    'portfolio_url': row[18],
-                    'specialization': row[19]
+                    'design_tool': row[16],
+                    'portfolio_url': row[17],
+                    'specialization': row[18]
                 }
 
             return result
@@ -160,13 +181,16 @@ class NativeEmployeeRepository:
 
     def update_employee(self, emp_id: int, data: Dict[str, Any]) -> int:
         try:
+            # Обновляем основные поля
             for key, val in data.items():
-                if key in ['full_name', 'email', 'phone', 'address', 'salary']:
+                if key in ['full_name', 'email', 'salary']:
                     self.cursor.execute(f"UPDATE employees SET {key} = ? WHERE id = ?", (val, emp_id))
 
+            # Определяем тип сотрудника
             self.cursor.execute("SELECT employee_type FROM employees WHERE id = ?", (emp_id,))
             emp_type = self.cursor.fetchone()[0]
 
+            # Обновляем поля наследника
             if emp_type == 'developer':
                 for key in ['programming_language', 'github_username', 'years_of_experience', 'framework']:
                     if key in data:
@@ -182,16 +206,19 @@ class NativeEmployeeRepository:
                         self.cursor.execute(f"UPDATE designers SET {key} = ? WHERE employee_id = ?",
                                             (data[key], emp_id))
 
+            # Получаем текущие данные для версии
             self.cursor.execute("SELECT full_name, email, salary, employee_type FROM employees WHERE id = ?", (emp_id,))
             emp_data = self.cursor.fetchone()
 
+            # Увеличиваем номер версии
             self.cursor.execute("UPDATE employees SET current_version = current_version + 1 WHERE id = ?", (emp_id,))
             self.cursor.execute("SELECT current_version FROM employees WHERE id = ?", (emp_id,))
             new_version = self.cursor.fetchone()[0]
 
+            # Создаем версию
             self.cursor.execute("""
-                INSERT INTO employee_versions (employee_id, version_number, full_name, email, salary, employee_type)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO employee_versions (employee_id, version_number, full_name, email, salary, employee_type, changed_by)
+                VALUES (?, ?, ?, ?, ?, ?, 'user')
             """, (emp_id, new_version, emp_data[0], emp_data[1], emp_data[2], emp_data[3]))
 
             self.conn.commit()
@@ -231,24 +258,59 @@ class NativeEmployeeRepository:
         except Exception as e:
             raise e
 
-    def get_org_tree(self) -> List[Dict[str, Any]]:
+    def get_all_org_units(self) -> List[Dict[str, Any]]:
+        """Получить все подразделения"""
         try:
-            def build_tree(parent_id=None):
-                if parent_id is None:
-                    self.cursor.execute("SELECT id, name, unit_type FROM org_units WHERE parent_id IS NULL")
-                else:
-                    self.cursor.execute("SELECT id, name, unit_type FROM org_units WHERE parent_id = ?", (parent_id,))
-                units = self.cursor.fetchall()
-                return [{
-                    'id': u[0],
-                    'name': u[1],
-                    'unit_type': u[2],
-                    'children': build_tree(u[0])
-                } for u in units]
-
-            return build_tree()
+            self.cursor.execute("""
+                SELECT id, name, unit_type, parent_id 
+                FROM org_units
+                ORDER BY id
+            """)
+            rows = self.cursor.fetchall()
+            return [{
+                'id': r[0],
+                'name': r[1],
+                'unit_type': r[2],
+                'parent_id': r[3]
+            } for r in rows]
         except Exception as e:
             raise e
+
+    def create_org_unit(self, data: Dict[str, Any]) -> int:
+        """Создать подразделение"""
+        try:
+            self.cursor.execute("""
+                INSERT INTO org_units (name, unit_type, parent_id)
+                VALUES (?, ?, ?)
+            """, (data['name'], data['unit_type'], data.get('parent_id')))
+            self.conn.commit()
+            return self.cursor.lastrowid
+        except Exception as e:
+            self.conn.rollback()
+            raise e
+
+    def get_org_tree(self) -> List[Dict[str, Any]]:
+        """Получить дерево подразделений"""
+        try:
+            units = self.get_all_org_units()
+            return self._build_tree_from_list(units)
+        except Exception as e:
+            raise e
+
+    def _build_tree_from_list(self, units, parent_id=None):
+        """Строит дерево из списка подразделений"""
+        result = []
+        for unit in units:
+            if unit.get('parent_id') == parent_id:
+                children = self._build_tree_from_list(units, unit.get('id'))
+                unit_data = {
+                    'id': unit.get('id'),
+                    'name': unit.get('name'),
+                    'unit_type': unit.get('unit_type'),
+                    'children': children
+                }
+                result.append(unit_data)
+        return result
 
     def __del__(self):
         if hasattr(self, 'cursor'):
